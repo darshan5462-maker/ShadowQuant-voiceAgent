@@ -580,7 +580,7 @@ const KARNATAKA_HOSPITALS = {
   }
 };
 
-/* ═══════════════════════════════════════════════════════════════════════
+ ═══════════════════════════════════════════════════════════════════════
    SEARCH ENGINE
 ═══════════════════════════════════════════════════════════════════════ 
 function normalizeDistrict(d) {
@@ -617,7 +617,7 @@ function searchHospitals({ district, specialty, name, type, keyword }) {
   return results;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
+ ═══════════════════════════════════════════════════════════════════════
    STATE + NOTIFICATIONS + EMERGENCY (same as before, compacted)
 ═══════════════════════════════════════════════════════════════════════ 
 const bookings=[], escalations=[], emergencies=[];
@@ -664,7 +664,7 @@ async function writeToSheets(row) {
   } catch(e) {return {ok:false};}
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
+ ═══════════════════════════════════════════════════════════════════════
    TOOL EXECUTION
 ═══════════════════════════════════════════════════════════════════════ 
 async function executeTool(name, args) {
@@ -738,7 +738,7 @@ async function executeTool(name, args) {
   return {status:'error',message:'Unknown tool.'};
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════
    FUNCTION DEFINITIONS
 ═══════════════════════════════════════════════════════════════════════ 
 const FUNCTIONS=[
@@ -798,8 +798,7 @@ VOICE RULES:
 - For government hospitals, emphasise free services.
 
 Today: ${new Date().toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}.`;
-
-/* ═══════════════════════════════════════════════════════════════════════
+ ═══════════════════════════════════════════════════════════════════════
    ROUTES
 ═══════════════════════════════════════════════════════════════════════ 
 app.post('/api/realtime-token', async (req,res) => {
