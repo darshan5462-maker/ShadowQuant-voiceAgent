@@ -1489,155 +1489,44 @@ function searchHospitals({ district, specialty, name, type, keyword }) {
 ═══════════════════════════════════════════════════════════════════════ */
 const bookings=[], escalations=[], emergencies=[];
 
-/* ═══════════════════════════════════════════════════════════════════════
-   NOTIFICATION ENGINE  —  3 real free channels for India
-   ─────────────────────────────────────────────────────────────────────
-   Channel 1: Fast2SMS  (FREE Indian SMS — fast2sms.com)
-     → Sign up at fast2sms.com, get API key (free ₹50 credit, ~50 SMS)
-     → Set env: FAST2SMS_API_KEY=your_key
-     → Works on any Indian mobile number, no DLT needed for dev mode
-
-   Channel 2: WhatsApp via CallMeBot  (FREE)
-     → User does ONE-TIME setup: save +34 644 44 22 27 and send
-       "I allow callmebot to send me messages" on WhatsApp
-     → They get a personal apikey back
-     → Set env: CALLMEBOT_APIKEY=their_apikey (or pass per-user)
-     → Or: user gives their callmebot apikey during booking
-
-   Channel 3: Telegram Bot  (FREE, instant)
-     → Create bot via @BotFather → get TELEGRAM_BOT_TOKEN
-     → User starts a chat with your bot → get their chat_id from
-       https://api.telegram.org/bot<TOKEN>/getUpdates
-     → Or: user sends their @username / chat_id during booking
-
-   Channel 4: Twilio (paid fallback — works if configured)
-═══════════════════════════════════════════════════════════════════════ */
-async function sendNotification({to, message, channel='auto', telegramChatId=null, callmebotApikey=null}) {
+async function sendNotification({to, message}) {
   const r = {};
-  const phoneClean = to.replace(/\D/g, '');
-  const phone10    = phoneClean.slice(-10);          // last 10 digits
-  const phone91    = '91' + phone10;                 // with country code, no +
+  const phone10 = to.replace(/\D/g, '').slice(-10);
 
-  /* ── CHANNEL 1: Fast2SMS (Free Indian SMS) ────────────────────── */
-  if ((channel === 'sms' || channel === 'auto') && process.env.FAST2SMS_API_KEY) {
+  if (process.env.FAST2SMS_API_KEY) {
     try {
       const resp = await fetch('https://www.fast2sms.com/dev/bulkV2', {
-        method: 'POST',
-        headers: {
-          'authorization': process.env.FAST2SMS_API_KEY,
-          'Content-Type':  'application/json'
-        },
-        body: JSON.stringify({
-          route:    'q',           // quick/transactional route
-          message:  message,
-          language: 'english',
-          flash:    0,
-          numbers:  phone10       // 10-digit Indian number
-        })
+        method:  'POST',
+        headers: { 'authorization': process.env.FAST2SMS_API_KEY, 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ route:'q', message, language:'english', flash:0, numbers:phone10 })
       });
       const data = await resp.json();
       if (data.return === true) {
         r.sms = 'sent';
-        console.log(`[Fast2SMS] ✅ SMS sent to ${phone10}`);
+        console.log(`[SMS] ✅ sent to ${phone10}`);
       } else {
-        r.sms_error = data.message || 'Fast2SMS failed';
-        console.warn('[Fast2SMS] ❌', data.message);
+        r.sms_error = data.message;
+        console.warn('[SMS] ❌', data.message);
       }
     } catch(e) {
       r.sms_error = e.message;
-      console.error('[Fast2SMS]', e.message);
+      console.error('[SMS]', e.message);
     }
-  }
-
-  /* ── CHANNEL 2: WhatsApp via CallMeBot (Free) ─────────────────── */
-  // callmebotApikey is per-user — user does 1-time setup with CallMeBot
-  const cbKey = callmebotApikey || process.env.CALLMEBOT_APIKEY;
-  if ((channel === 'whatsapp' || channel === 'auto') && cbKey && !r.whatsapp) {
-    try {
-      const encoded = encodeURIComponent(message);
-      const url = `https://api.callmebot.com/whatsapp.php?phone=${phone91}&text=${encoded}&apikey=${cbKey}`;
-      const resp = await fetch(url);
-      const text = await resp.text();
-      if (resp.ok && !text.toLowerCase().includes('error')) {
-        r.whatsapp = 'sent';
-        console.log(`[CallMeBot WhatsApp] ✅ sent to ${phone91}`);
-      } else {
-        r.whatsapp_error = text.slice(0, 100);
-        console.warn('[CallMeBot WhatsApp] ❌', text.slice(0, 100));
-      }
-    } catch(e) {
-      r.whatsapp_error = e.message;
-      console.error('[CallMeBot WhatsApp]', e.message);
-    }
-  }
-
-  /* ── CHANNEL 3: Telegram Bot (Free, instant) ──────────────────── */
-  // telegramChatId can be per-user or global from env
-  const tgToken  = process.env.TELEGRAM_BOT_TOKEN;
-  const tgChatId = telegramChatId || process.env.TELEGRAM_CHAT_ID;
-  if ((channel === 'telegram' || channel === 'auto') && tgToken && tgChatId && !r.telegram) {
-    try {
-      const resp = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id:    tgChatId,
-          text:       message,
-          parse_mode: 'HTML'
-        })
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        r.telegram = 'sent';
-        console.log(`[Telegram] ✅ sent to ${tgChatId}`);
-      } else {
-        r.telegram_error = data.description;
-        console.warn('[Telegram] ❌', data.description);
-      }
-    } catch(e) {
-      r.telegram_error = e.message;
-      console.error('[Telegram]', e.message);
-    }
-  }
-
-  /* ── CHANNEL 4: Twilio (paid fallback) ────────────────────────── */
-  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER) {
-    if (!r.sms && !r.whatsapp) {
-      try {
-        const client  = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-        const toE164  = '+' + phone91;
-        await client.messages.create({ from: process.env.TWILIO_FROM_NUMBER, to: toE164, body: message });
-        r.sms = 'sent_twilio';
-        console.log(`[Twilio SMS] ✅ sent to ${toE164}`);
-      } catch(e) {
-        r.twilio_error = e.message;
-        console.error('[Twilio]', e.message);
-      }
-    }
-  }
-
-  /* ── FALLBACK: Console log (always runs so you can see it) ────── */
-  const sent = Object.keys(r).filter(k => r[k] === 'sent' || r[k] === 'sent_twilio');
-  if (sent.length === 0) {
-    console.log(`\n📢 [NOTIFICATION — no channel configured]`);
-    console.log(`   To:      ${to}`);
-    console.log(`   Message: ${message.slice(0, 120)}...`);
-    console.log(`   → Configure FAST2SMS_API_KEY, CALLMEBOT_APIKEY, or TELEGRAM_BOT_TOKEN`);
+  } else {
+    console.log(`[SMS] No FAST2SMS_API_KEY — message logged:\n${message}`);
     r.logged = true;
   }
 
-  r._channels_sent = sent;
   return r;
 }
-
 async function dispatchEmergency({lat,lng,address,patientName,phone,symptoms,sessionId}) {
   const locationStr=(lat&&lng)?`GPS: ${lat.toFixed(5)},${lng.toFixed(5)} — https://maps.google.com/?q=${lat},${lng}`:(address||'Location not shared');
   const emergency={id:'EMG-'+Date.now().toString(36).toUpperCase().slice(-6),patient:patientName||'Unknown',phone:phone||'N/A',symptoms,location:locationStr,lat,lng,sessionId,ts:new Date().toISOString(),status:'dispatched'};
   emergencies.push(emergency);
   const alertMsg=`🚨 EMERGENCY — ${emergency.id}\nPatient: ${emergency.patient}\nPhone: ${emergency.phone}\nSymptoms: ${symptoms}\nLocation: ${locationStr}\nTime: ${new Date().toLocaleString('en-IN')}`;
   console.error('\n'+'='.repeat(60)+'\n'+alertMsg+'\n'+'='.repeat(60)+'\n');
-  await sendNotification({to:process.env.CLINIC_EMERGENCY_PHONE||'108',message:alertMsg,channel:'auto'});
-  if (phone&&phone!=='N/A') await sendNotification({to:phone,message:`🚨 ShadowQuant Emergency: Emergency services (108) alerted to your location. Stay calm. Help is coming.`,channel:'auto'});
+  await sendNotification({to:process.env.CLINIC_EMERGENCY_PHONE||'108',message:alertMsg,});
+  if (phone&&phone!=='N/A') await sendNotification({to:phone,message:`🚨 ShadowQuant Emergency: Emergency services (108) alerted to your location. Stay calm. Help is coming.`,});
   return {emergency_id:emergency.id,status:'dispatched',location:locationStr,message:`Emergency services alerted. ID: ${emergency.id}. Please also call 108 directly as backup.`};
 }
 
@@ -1700,7 +1589,7 @@ async function executeTool(name, args) {
     await writeToSheets(booking);
     let notifStatus='no_phone';
     if (args.phone&&args.phone!=='N/A') {
-      const nResult=await sendNotification({to:args.phone,message:`✅ Appointment Confirmed — ShadowQuant Smart Clinic\nRef: ${ref}\nPatient: ${args.patient_name}\n${day.charAt(0).toUpperCase()+day.slice(1)} at ${args.time||'09:00'}\nHospital: ${args.hospital_name||'As discussed'}\nDoctor: ${args.doctor_name||'Available'}\nSpecialty: ${args.specialty||'General'}\nEmergency: 108 | Helpline: 104`,channel:'auto'});
+      const nResult=await sendNotification({to:args.phone,message:`✅ Appointment Confirmed — ShadowQuant Smart Clinic\nRef: ${ref}\nPatient: ${args.patient_name}\n${day.charAt(0).toUpperCase()+day.slice(1)} at ${args.time||'09:00'}\nHospital: ${args.hospital_name||'As discussed'}\nDoctor: ${args.doctor_name||'Available'}\nSpecialty: ${args.specialty||'General'}\nEmergency: 108 | Helpline: 104`,});
       notifStatus=Object.keys(nResult).filter(k=>nResult[k]==='sent').join(', ')||'logged';
     }
     return {status:'confirmed',ref,hospital:args.hospital_name,doctor:args.doctor_name,day:args.day,time:args.time||'09:00',notification_sent:notifStatus,message:`Appointment confirmed! Reference: ${ref}. ${args.patient_name} booked with ${args.doctor_name||'available doctor'} at ${args.hospital_name} on ${args.day} at ${args.time||'09:00'}. Confirmation sent via ${notifStatus}.`};
@@ -1712,7 +1601,7 @@ async function executeTool(name, args) {
     const phone=args.phone||b.phone;
     if (!phone||phone==='N/A') return {status:'no_phone',message:'No phone number.'};
     const msg=`✅ Appointment — ShadowQuant Smart Clinic\nRef: ${b.ref} | ${b.patient}\n${b.day} at ${b.time}\n${b.hospital} | ${b.doctor}\nEmergency: 108`;
-    const result=await sendNotification({to:phone,message:msg,channel:args.channel||'auto'});
+    const result=await sendNotification({to:phone,message:msg});
     return {status:'sent',channel_used:Object.keys(result).filter(k=>result[k]==='sent').join(', ')||'logged'};
   }
 
@@ -1720,7 +1609,7 @@ async function executeTool(name, args) {
     const idx=bookings.findIndex(b=>b.ref===args.ref);
     if (idx===-1) return {status:'not_found',message:`No booking with ref ${args.ref}.`};
     const [cancelled]=bookings.splice(idx,1);
-    if (cancelled.phone!=='N/A') await sendNotification({to:cancelled.phone,message:`❌ Appointment Cancelled — Ref: ${args.ref}. To rebook: 104 (Karnataka Health Helpline)`,channel:'auto'});
+    if (cancelled.phone!=='N/A') await sendNotification({to:cancelled.phone,message:`❌ Appointment Cancelled — Ref: ${args.ref}. To rebook: 104 (Karnataka Health Helpline)`,});
     return {status:'cancelled',message:`Booking ${args.ref} for ${cancelled.patient} cancelled.`};
   }
 
@@ -1834,7 +1723,7 @@ app.post('/api/chat', async (req,res) => {
   } catch(err){res.status(500).json({error:err.message});}
 });
 
-app.get('/api/health',(req,res)=>res.json({status:'ok',agent:'Aria',system:'ShadowQuant Smart Clinic — Karnataka',districts:Object.keys(KARNATAKA_HOSPITALS).length,total_hospitals:Object.values(KARNATAKA_HOSPITALS).reduce((a,d)=>a+(d.hospitals||[]).length,0),total_clinics:Object.values(KARNATAKA_HOSPITALS).reduce((a,d)=>a+(d.clinics||[]).length,0),model:'gpt-4o-realtime',notifications:{fast2sms:!!process.env.FAST2SMS_API_KEY,callmebot_whatsapp:!!process.env.CALLMEBOT_APIKEY,telegram:!!process.env.TELEGRAM_BOT_TOKEN,twilio:!!process.env.TWILIO_ACCOUNT_SID}}));
+app.get('/api/health',(req,res)=>res.json({status:'ok',agent:'Aria',system:'ShadowQuant Smart Clinic — Karnataka',districts:Object.keys(KARNATAKA_HOSPITALS).length,total_hospitals:Object.values(KARNATAKA_HOSPITALS).reduce((a,d)=>a+(d.hospitals||[]).length,0),total_clinics:Object.values(KARNATAKA_HOSPITALS).reduce((a,d)=>a+(d.clinics||[]).length,0),model:'gpt-4o-realtime',notifications:{sms:!!process.env.FAST2SMS_API_KEY}}));
 app.get('/api/districts',(req,res)=>res.json(Object.values(KARNATAKA_HOSPITALS).map(d=>({name:d.district,hospitals:(d.hospitals||[]).length,clinics:(d.clinics||[]).length}))));
 app.get('/api/hospitals',(req,res)=>res.json(searchHospitals({district:req.query.district,specialty:req.query.specialty})));
 app.get('/api/bookings',(req,res)=>res.json(bookings));
@@ -1849,8 +1738,5 @@ app.listen(PORT,()=>{
   console.log(`🗺️   Karnataka Districts: ${Object.keys(KARNATAKA_HOSPITALS).length}`);
   console.log(`🏥  Hospitals: ${h} | Clinics: ${c}`);
   console.log(`🎙️   Realtime API WebRTC: ready`);
-  console.log(`📱  Fast2SMS (Free SMS):       ${process.env.FAST2SMS_API_KEY?'✅ configured':'⚠️  Set FAST2SMS_API_KEY'}`);
-  console.log(`💬  CallMeBot (Free WhatsApp):  ${process.env.CALLMEBOT_APIKEY?'✅ configured':'⚠️  Set CALLMEBOT_APIKEY'}`);
-  console.log(`📨  Telegram (Free):            ${process.env.TELEGRAM_BOT_TOKEN?'✅ configured':'⚠️  Set TELEGRAM_BOT_TOKEN'}`);
-  console.log(`📟  Twilio (Paid fallback):     ${process.env.TWILIO_ACCOUNT_SID?'✅ configured':'—  Optional'}`);
+  console.log(`📱  SMS (Fast2SMS): ${process.env.FAST2SMS_API_KEY?'✅':'⚠️  Set FAST2SMS_API_KEY'}`);
 });
