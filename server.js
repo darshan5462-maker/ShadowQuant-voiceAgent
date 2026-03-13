@@ -1622,11 +1622,11 @@ async function executeTool(name, args) {
 const FUNCTIONS=[
   {name:'search_hospitals',description:'Search hospitals and clinics across Karnataka by district, specialty, doctor name, or keyword. Use for ANY query about hospitals, doctors, or medical services in Karnataka.',parameters:{type:'object',properties:{district:{type:'string',description:'Karnataka district: Bengaluru, Mysuru, Shivamogga, Mangaluru, Hubballi, Belagavi, Kalaburagi, Davangere, Hassan, Ballari, Raichur, Udupi, Bidar, Vijayapura, Kodagu, Chitradurga, Tumakuru'},specialty:{type:'string',description:'Medical specialty: Cardiology, Neurology, Orthopaedics, Gynaecology, Paediatrics, Oncology, General Medicine, Dental, ENT, etc.'},hospital_name:{type:'string'},facility_type:{type:'string',description:'government, private, teaching, super-specialty, clinic'},keyword:{type:'string'}}}},
   {name:'get_hospital_details',description:'Get full details of a specific hospital.',parameters:{type:'object',properties:{hospital_id:{type:'string'},hospital_name:{type:'string'}}}},
-  {name:'list_districts',description:'List all Karnataka districts with hospital data.',parameters:{type:'object',properties:{}}},
+  {name:'list_districts',description:'List all Karnataka districts with hospital data.',parameters:{type:'object',properties:{dummy:{type:'string',description:'Not needed, pass empty string'}}}},
   {name:'assess_urgency',description:'Assess urgency of patient symptoms. ALWAYS call first when patient describes any medical problem.',parameters:{type:'object',properties:{symptoms:{type:'string'}},required:['symptoms']}},
   {name:'trigger_emergency',description:'IMMEDIATELY dispatch emergency services when urgency is CRITICAL. Do NOT wait for confirmation.',parameters:{type:'object',properties:{patient_name:{type:'string'},phone:{type:'string'},symptoms:{type:'string'},lat:{type:'number'},lng:{type:'number'},address:{type:'string'},session_id:{type:'string'}},required:['symptoms']}},
   {name:'book_appointment',description:'Book a medical appointment at any Karnataka hospital. Collect: patient name, phone, hospital, doctor, day, time, specialty.',parameters:{type:'object',properties:{patient_name:{type:'string'},phone:{type:'string'},hospital_name:{type:'string'},doctor_name:{type:'string'},specialty:{type:'string'},day:{type:'string'},time:{type:'string'},urgency:{type:'string',enum:['routine','high','critical']}},required:['patient_name','hospital_name','day','specialty']}},
-  {name:'send_booking_notification',description:'Send appointment confirmation to patient.',parameters:{type:'object',properties:{ref:{type:'string'},phone:{type:'string'},channel:{type:'string',enum:['sms','whatsapp','telegram','auto']}},required:['ref']}},
+  {name:'send_booking_notification',description:'Send SMS confirmation to patient.',parameters:{type:'object',properties:{ref:{type:'string'},phone:{type:'string'}},required:['ref']}},
   {name:'cancel_appointment',description:'Cancel an existing appointment.',parameters:{type:'object',properties:{ref:{type:'string'}},required:['ref']}}
 ];
 
@@ -1785,6 +1785,32 @@ app.post('/api/chat', async (req, res) => {
     console.error('[/api/chat] Caught error:', err.message, err.stack?.slice(0, 400));
     res.status(500).json({ error: err.message });
   }
+});
+
+
+/* DEBUG — test OpenAI connection and see exact error */
+app.get('/api/debug', async (req, res) => {
+  const results = { key_set: !!OPENAI_API_KEY, key_prefix: OPENAI_API_KEY?.slice(0,12) };
+  try {
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model:      'gpt-4o',
+        messages:   [{ role: 'user', content: 'Reply with just the word OK' }],
+        max_tokens: 5
+      })
+    });
+    const data = await r.json();
+    results.openai_status  = r.status;
+    results.openai_ok      = r.ok;
+    results.openai_reply   = data.choices?.[0]?.message?.content;
+    results.openai_error   = data.error?.message;
+    results.raw            = data;
+  } catch(e) {
+    results.fetch_error = e.message;
+  }
+  res.json(results);
 });
 
 app.get('/api/health',(req,res)=>res.json({status:'ok',agent:'Aria',system:'ShadowQuant Smart Clinic — Karnataka',districts:Object.keys(KARNATAKA_HOSPITALS).length,total_hospitals:Object.values(KARNATAKA_HOSPITALS).reduce((a,d)=>a+(d.hospitals||[]).length,0),total_clinics:Object.values(KARNATAKA_HOSPITALS).reduce((a,d)=>a+(d.clinics||[]).length,0),model:'gpt-4o-realtime',notifications:{sms:!!process.env.FAST2SMS_API_KEY}}));
