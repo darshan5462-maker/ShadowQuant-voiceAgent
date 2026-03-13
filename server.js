@@ -1699,28 +1699,92 @@ app.post('/api/tool-call', async (req,res) => {
   res.json(result);
 });
 
-app.post('/api/chat', async (req,res) => {
-  const {messages}=req.body;
-  if (!messages||!Array.isArray(messages)) return res.status(400).json({error:'messages required'});
+app.post('/api/chat', async (req, res) => {
+  const { messages } = req.body;
+  if (!messages || !Array.isArray(messages))
+    return res.status(400).json({ error: 'messages array required' });
+
   try {
-    let history=[...messages],finalText='',toolCalls=[],loops=0;
-    while(loops++<10){
-      const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${OPENAI_API_KEY}`},body:JSON.stringify({model:'gpt-4o',messages:[{role:'system',content:SYSTEM_PROMPT},...history],functions:FUNCTIONS,function_call:'auto',max_tokens:600,temperature:0.4})});
-      if (!r.ok){const e=await r.json();throw new Error(e.error?.message||`OpenAI ${r.status}`);}
-      const data=await r.json();
-      const msg=data.choices[0].message;
-      history.push(msg);
-      if (msg.function_call){
-        let args={};try{args=JSON.parse(msg.function_call.arguments);}catch(e){}
-        const result=await executeTool(msg.function_call.name,args);
-        toolCalls.push({tool:msg.function_call.name,args,result});
-        history.push({role:'function',name:msg.function_call.name,content:JSON.stringify(result)});
-        continue;
+    // Convert FUNCTIONS → OpenAI tools format (function_call is deprecated)
+    const tools = FUNCTIONS.map(f => ({
+      type: 'function',
+      function: { name: f.name, description: f.description, parameters: f.parameters }
+    }));
+
+    let history   = [...messages];
+    let finalText = '';
+    let toolCalls = [];
+    let loops     = 0;
+
+    while (loops++ < 10) {
+      const payload = {
+        model:       'gpt-4o',
+        messages:    [{ role: 'system', content: SYSTEM_PROMPT }, ...history],
+        tools,
+        tool_choice: 'auto',
+        max_tokens:  600,
+        temperature: 0.4
+      };
+
+      const r = await fetch('https://api.openai.com/v1/chat/completions', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+        body:    JSON.stringify(payload)
+      });
+
+      if (!r.ok) {
+        const errBody = await r.json().catch(() => ({}));
+        const msg = errBody?.error?.message || `OpenAI HTTP ${r.status}`;
+        console.error('[/api/chat] OpenAI error:', msg);
+        return res.status(502).json({ error: msg });
       }
-      finalText=msg.content||'';break;
+
+      const data  = await r.json();
+      const msg   = data.choices?.[0]?.message;
+      if (!msg) {
+        console.error('[/api/chat] Unexpected response:', JSON.stringify(data).slice(0, 300));
+        return res.status(502).json({ error: 'Unexpected OpenAI response' });
+      }
+
+      history.push(msg);
+
+      // Handle tool calls (new format)
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        for (const tc of msg.tool_calls) {
+          const name = tc.function.name;
+          let args   = {};
+          try { args = JSON.parse(tc.function.arguments); } catch(e) {}
+
+          console.log(`[Tool] ${name}`, JSON.stringify(args).slice(0, 100));
+          const result = await executeTool(name, args);
+          toolCalls.push({ tool: name, args, result });
+
+          // Tool result message (new format)
+          history.push({
+            role:         'tool',
+            tool_call_id: tc.id,
+            content:      JSON.stringify(result)
+          });
+        }
+        continue; // loop back to get model's next response
+      }
+
+      // Plain text response — done
+      finalText = msg.content || '';
+      break;
     }
-    res.json({reply:finalText,tool_calls:toolCalls,bookings_count:bookings.length,messages:history.filter(m=>m.role!=='system')});
-  } catch(err){res.status(500).json({error:err.message});}
+
+    res.json({
+      reply:          finalText,
+      tool_calls:     toolCalls,
+      bookings_count: bookings.length,
+      messages:       history.filter(m => m.role !== 'system')
+    });
+
+  } catch (err) {
+    console.error('[/api/chat] Caught error:', err.message, err.stack?.slice(0, 400));
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/health',(req,res)=>res.json({status:'ok',agent:'Aria',system:'ShadowQuant Smart Clinic — Karnataka',districts:Object.keys(KARNATAKA_HOSPITALS).length,total_hospitals:Object.values(KARNATAKA_HOSPITALS).reduce((a,d)=>a+(d.hospitals||[]).length,0),total_clinics:Object.values(KARNATAKA_HOSPITALS).reduce((a,d)=>a+(d.clinics||[]).length,0),model:'gpt-4o-realtime',notifications:{sms:!!process.env.FAST2SMS_API_KEY}}));
