@@ -752,7 +752,7 @@ const FUNCTIONS=[
   {name:'cancel_appointment',description:'Cancel an existing appointment.',parameters:{type:'object',properties:{ref:{type:'string'}},required:['ref']}}
 ];
 
-/* ═══════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════
    SYSTEM PROMPT
 ═══════════════════════════════════════════════════════════════════════ 
 const SYSTEM_PROMPT=`You are Aria, the AI health assistant for ShadowQuant Smart Clinic — Karnataka's comprehensive healthcare navigation system covering hospitals and clinics across all districts.
