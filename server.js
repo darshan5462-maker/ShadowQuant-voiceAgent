@@ -626,30 +626,52 @@ async function sendNotification({to, message}) {
   const r = {};
   const phone10 = to.replace(/\D/g, '').slice(-10);
 
-  if (process.env.FAST2SMS_API_KEY) {
+  if (!phone10 || phone10.length !== 10) {
+    console.warn('[SMS] Invalid phone number:', to);
+    r.error = 'invalid_phone';
+    return r;
+  }
+
+  if (!process.env.FAST2SMS_API_KEY) {
+    console.log(`[SMS] No API key — message for ${phone10}:\n${message}`);
+    r.logged = true;
+    return r;
+  }
+
+  // Try route 'dlt' first (DLT registered), fallback to 'q' (quick)
+  const routes = ['q', 'v3'];
+  for (const route of routes) {
     try {
+      const body = route === 'v3'
+        ? { route, message, language:'english', flash:0, numbers:phone10 }
+        : { route, message, language:'english', flash:0, numbers:phone10 };
+
       const resp = await fetch('https://www.fast2sms.com/dev/bulkV2', {
         method:  'POST',
         headers: { 'authorization': process.env.FAST2SMS_API_KEY, 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ route:'q', message, language:'english', flash:0, numbers:phone10 })
+        body:    JSON.stringify(body)
       });
+
       const data = await resp.json();
+      console.log(`[SMS] route=${route} response:`, JSON.stringify(data));
+
       if (data.return === true) {
         r.sms = 'sent';
-        console.log(`[SMS] ✅ sent to ${phone10}`);
+        r.route = route;
+        console.log(`[SMS] ✅ sent to ${phone10} via route ${route}`);
+        return r;
       } else {
-        r.sms_error = data.message;
-        console.warn('[SMS] ❌', data.message);
+        r[`route_${route}_error`] = data.message || JSON.stringify(data);
+        console.warn(`[SMS] route=${route} failed:`, data.message);
+        // try next route
       }
     } catch(e) {
-      r.sms_error = e.message;
-      console.error('[SMS]', e.message);
+      r[`route_${route}_exception`] = e.message;
+      console.error(`[SMS] route=${route} exception:`, e.message);
     }
-  } else {
-    console.log(`[SMS] No FAST2SMS_API_KEY — message logged:\n${message}`);
-    r.logged = true;
   }
 
+  r.sms_error = 'all_routes_failed';
   return r;
 }
 async function dispatchEmergency({lat,lng,address,patientName,phone,symptoms,sessionId}) {
@@ -920,6 +942,26 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+
+
+/* SMS TEST — call this to test SMS directly */
+app.get('/api/test-sms', async (req, res) => {
+  const phone = req.query.phone;
+  if (!phone) return res.json({ error: 'Pass ?phone=9876543210' });
+
+  const result = await sendNotification({
+    to: phone,
+    message: 'ShadowQuant Smart Clinic: This is a test SMS. If you received this, SMS is working correctly.'
+  });
+
+  res.json({
+    phone_received: phone,
+    phone_cleaned:  phone.replace(/\D/g,'').slice(-10),
+    api_key_set:    !!process.env.FAST2SMS_API_KEY,
+    api_key_prefix: process.env.FAST2SMS_API_KEY?.slice(0,8),
+    result
+  });
+});
 
 /* DEBUG — test OpenAI connection and see exact error */
 app.get('/api/debug', async (req, res) => {
